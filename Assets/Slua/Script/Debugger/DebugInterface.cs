@@ -20,6 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+// Comment out this line to switch off remote debugger for slua
+#define LuaDebugger
+
 namespace SLua
 {
 	using UnityEngine;
@@ -34,7 +37,6 @@ namespace SLua
 	using System.Text.RegularExpressions;
 	using System.Reflection;
 
-
 	class DebugInterface : LuaObject
 	{
 		LuaState state;
@@ -47,9 +49,10 @@ namespace SLua
 		bool debugMode = false;
 		int packageLen = 0;
 		Dictionary<string, string[]> luaSource = new Dictionary<string, string[]>();
+		static Dictionary<string, string> sourceMd5 = new Dictionary<string, string>();
+		static Dictionary<string, string> md5Source = new Dictionary<string, string>();
 
 		const int DebugPort = 10240;
-		static Regex re = new Regex(@"\$\((\w+)\)");
 
 
 		static DebugInterface instance;
@@ -75,9 +78,29 @@ namespace SLua
 			IntPtr l = L.L;
 			getTypeTable(l, "LuaDebugger");
 			addMember(l, output, false);
-			addMember(l, fetchLuaSource, false);
 			addMember(l, onBreak, false);
+			addMember(l, md5, false);
 			createTypeMetatable(l, typeof(DebugInterface));
+		}
+
+		public static void require(string f,byte[] bytes)
+		{
+#if LuaDebugger
+			System.Security.Cryptography.MD5CryptoServiceProvider md5 = new System.Security.Cryptography.MD5CryptoServiceProvider();
+			byte[] hashBytes = md5.ComputeHash(bytes);
+
+			// Convert the encrypted bytes back to a string (base 16)
+			string hashString = "";
+
+			for (int i = 0; i < hashBytes.Length; i++)
+			{
+				hashString += System.Convert.ToString(hashBytes[i], 16).PadLeft(2, '0');
+			}
+
+			string m = hashString.PadLeft(32, '0');
+			sourceMd5[m] = f.ToLower();
+			md5Source[f.ToLower()] = m;
+#endif
 		}
 
 
@@ -88,7 +111,7 @@ namespace SLua
 			{
 				string str;
 				LuaObject.checkType(l, 1, out str);
-				instance.debugPrint(str);
+				instance.echo(str);
 				pushValue(l, true);
 				return 1;
 			}
@@ -99,30 +122,17 @@ namespace SLua
 		}
 
 		[MonoPInvokeCallbackAttribute(typeof(LuaCSFunction))]
-		static int fetchLuaSource(IntPtr l)
-		{
-			try
-			{
-				string fn;
-				checkType(l, 1, out fn);
-				int line;
-				checkType(l, 2, out line);
-				pushValue(l, true);
-				pushValue(l, instance.fetchLuaSource(fn, line));
-				return 2;
-			}
-			catch (Exception e)
-			{
-				return error(l, e);
-			}
-		}
-
-		[MonoPInvokeCallbackAttribute(typeof(LuaCSFunction))]
 		static int onBreak(IntPtr l)
 		{
 			try
 			{
-				instance.onBreak();
+				string f;
+				checkType(l, 1, out f);
+				int line;
+				checkType(l, 2, out line);
+				string md5;
+				checkType(l, 3, out md5);
+				instance.onBreak(f,line,md5);
 				pushValue(l, true);
 				return 1;
 			}
@@ -132,8 +142,26 @@ namespace SLua
 			}
 		}
 
+		[MonoPInvokeCallbackAttribute(typeof(LuaCSFunction))]
+		static int md5(IntPtr l)
+		{
+			try
+			{
+				string f;
+				checkType(l, 1, out f);
+				string md5=instance.md5(f);
+				pushValue(l, true);
+				pushValue(l, md5);
+				return 2;
+			}
+			catch (Exception e)
+			{
+				return error(l, e);
+			}
+		}
 
-		string fetchLuaSource(string fileName, int line)
+
+		string fetchLuaSource(string fileName, int line=-1, int range=3)
 		{
 			if (!luaSource.ContainsKey(fileName))
 			{
@@ -149,16 +177,37 @@ namespace SLua
 				luaSource.Add(fileName, splitLines);
 			}
 
+			
 			var lines = luaSource[fileName];
-			if (line <= 0 || line > lines.Length)
+
+
+			int start,end;
+			if (line >= 0)
 			{
-				return null;
+				start = line - range;
+				end = line + range;
+				if (start < 0) start = 0;
+				if (end >= lines.Length) end = lines.Length;
 			}
-			return lines[line - 1];
+			else
+			{
+				start = 0;
+				end = lines.Length;
+			}
+
+			string ret = "";
+			for (int n = start; n < end; n++)
+			{
+				ret += lines[n];
+				ret += "\n";
+			}
+			return ret;
+
 		}
 
 		public void init()
 		{
+#if LuaDebugger
 			try
 			{
 				IPEndPoint localEP = new IPEndPoint(IPAddress.Parse("0.0.0.0"), DebugPort);
@@ -178,17 +227,30 @@ namespace SLua
 			{
 				Debug.LogError(string.Format("LuaDebugger listened failed for reason:：{0}", e.Message));
 			}
+#endif
 		}
 
 		public void update()
 		{
+#if LuaDebugger
 			if (client == null || !client.Connected)
 				return;
 
 			process();
+#endif
 		}
 
-		bool process()
+		void error(string err)
+		{
+			send("ret bad {0}", err);
+		}
+
+		void ok(string str)
+		{
+			send("ret ok {0}", str);
+		}
+
+		void process()
 		{
 			while (true)
 			{
@@ -201,19 +263,17 @@ namespace SLua
 					try
 					{
 						if(doCommand(str))
-							return true;
+							send("ret ok");
 					}
 					catch (Exception e)
 					{
-						debugPrint(e.Message + "\n");
+						error(e.Message);
 						Debug.LogError(e.Message);
 					}
-					prompt();
 				}
 				else
 					break;
 			}
-			return false;
 		}
 
 		bool recvCmd(byte[] bytes, out int len)
@@ -229,9 +289,8 @@ namespace SLua
 
 				if (packageLen < 0)
 				{
-					len = packageLen;
-					packageLen = 0;
-					return true;
+					Debug.LogError("Invalid packaged received.");
+					return false;
 				}
 
 				if (packageLen > 0 && client.Available >= packageLen)
@@ -258,7 +317,7 @@ namespace SLua
 		}
 
 
-		public void debugPrint(string str)
+		public void send(string str)
 		{
 			if (client != null && client.Connected)
 			{
@@ -270,6 +329,17 @@ namespace SLua
 				client.Send(bytes);
 				client.Blocking = false;
 			}
+		}
+
+		public void send(string fmt, params object[] args)
+		{
+			string str = string.Format(fmt, args);
+			send(str);
+		}
+
+		public void echo(string str)
+		{
+			send("print " + str);
 		}
 
 		public bool isStarted
@@ -291,20 +361,6 @@ namespace SLua
 			server.BeginAccept(new AsyncCallback(onClientConnect), server);
 
 			debugMode = false;
-			debugPrint("$(Connected)");
-			prompt();
-		}
-
-		void prompt()
-		{
-			if (debugMode)
-			{
-				debugPrint("$(PromptDebug)");
-			}
-			else
-			{
-				debugPrint("$(Prompt)");
-			}
 		}
 
 		public void close()
@@ -337,58 +393,56 @@ namespace SLua
 			client.Close();
 		}
 
-		public void onBreak()
+		public string md5(string f)
 		{
+			string md5;
+			if (md5Source.TryGetValue(f, out md5))
+				return md5;
+			return null;
+		}
+
+		public void onBreak(string f,int line,string md5)
+		{
+			send("break {0},{1},{2}", f, line, md5);
 			debugMode = true;
-			while (true)
+			while (debugMode && client.Connected)
 			{
-				if (!client.Connected)
-					break;
-
-				prompt();
-
-				while (client.Connected)
-				{
-					if (process())
-					{
-						debugMode = false;
-						prompt();
-						return;
-					}
-				}
+				process();
 			}
+			send("resume");
 		}
 
-		void cmdStart() {
+		bool cmdstart(string tail) {
 			start = true;
+			return true;
 		}
 
-		bool doControlCode(string code)
+		bool cmdfs(string tail)
 		{
-			code="cmd"+code;
-
-			MethodInfo mi = this.GetType().GetMethod(code, BindingFlags.Instance | BindingFlags.NonPublic);
-			if (mi != null) mi.Invoke(this, null);
-			else Debug.LogError(string.Format("Can't find control handler {0}",code));
-			return false;
-		}
-
-
-		bool isControlCode(string cmd,out string code)
-		{
-			Match m = re.Match(cmd);
-			if(m.Success) {
-				code = m.Groups[1].Value;
-				return true;
+			if (tail == "")
+			{
+				error("arg");
+				return false;
 			}
-			code=null;
+
+			string[] fileNameAndLine = tail.Split(new char[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
+			string fileName = fileNameAndLine[0];
+			int line = -1, range = 3;
+			if(fileNameAndLine.Length>1)
+				line = int.Parse(fileNameAndLine[1]);
+			if(fileNameAndLine.Length>2)
+				range = int.Parse(fileNameAndLine[2]);
+
+
+			ok(fetchLuaSource(fileName, line, range));
 			return false;
 		}
+
 
 		bool cmdb(string tail) {
 			if (tail == "")
 			{
-				debugPrint("usage:b main:123\n");
+				error("arg");
 				return false;
 			}
 
@@ -397,21 +451,38 @@ namespace SLua
 			int line = int.Parse(fileNameAndLine[1]);
 			var luaFunc = state.getFunction("Slua.ldb.addBreakPoint");
 			luaFunc.call(fileName, line);
-			return false;
+			return true;
+		}
+
+
+		bool cmdb5(string tail)
+		{
+			if (tail == "")
+			{
+				error("arg");
+				return false;
+			}
+
+			string[] fileNameAndLine = tail.Split(new char[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
+			string md5 = fileNameAndLine[0];
+			int line = int.Parse(fileNameAndLine[1]);
+			var luaFunc = state.getFunction("Slua.ldb.addBreakPointMD5");
+			luaFunc.call(md5, line);
+			return true;
 		}
 
 		bool deletebp(string tail)
 		{
 			if (tail == "")
 			{
-				debugPrint("usage:del #123\n");
+				error("arg");
 				return false;
 			}
 
 			int breakPointIndex = int.Parse(tail);
 			var luaFunc = state.getFunction("Slua.ldb.delBreakPoint");
 			luaFunc.call(breakPointIndex);
-			return false;
+			return true;
 		}
 
 		bool cmddelete(string tail)
@@ -419,34 +490,34 @@ namespace SLua
 			return deletebp(tail);
 		}
 
-		bool cmddel(string tail)
-		{
-			return deletebp(tail);
+		bool cmddel(string tail){
+			deletebp(tail);
+			return true;
 		}
 
 		bool cmdlist(string tail)
 		{
 			state.doString("Slua.ldb.showBreakPointList()");
-			return false;
+			return true;
 		}
 
 		bool cmdhelp(string tail)
 		{
-			debugPrint(usageTips);
-			return false;
+			echo(usageTips);
+			return true;
 		}
 
 		bool cmdclear(string tail)
 		{
 			state.doString("Slua.ldb.clearBreakPoint()");
-			return false;
+			return true;
 		}
 
 		bool cmdc(string tail)
 		{
 			if (!debugMode)
-				return true;
-
+				return false;
+			debugMode = false;
 			state.doString("Slua.ldb.continue()");
 			return true;
 		}
@@ -454,8 +525,8 @@ namespace SLua
 		bool cmds(string tail)
 		{
 			if (!debugMode)
-				return true;
-
+				return false;
+			debugMode = false;
 			state.doString("Slua.ldb.stepIn()");
 			return true;
 		}
@@ -463,8 +534,8 @@ namespace SLua
 		bool cmdn(string tail)
 		{
 			if (!debugMode)
-				return true;
-
+				return false;
+			debugMode = false;
 			state.doString("Slua.ldb.stepOver()");
 			return true;
 		}
@@ -488,40 +559,46 @@ namespace SLua
 			return true;
 		}
 
+		bool cmdp(string r)
+		{
+			var luaFunc = state.getFunction("Slua.ldb.printExpr");
+			luaFunc.call(r);
+			return true;
+		}
+
 
 		bool doCommand(string str)
 		{
-			string code;
-			if (isControlCode(str,out code))
+			int index = str.IndexOf(" ");
+			string cmd = str;
+			string tail = "";
+			if (index > 0)
 			{
-				return doControlCode(code);
+				cmd = str.Substring(0, index).Trim().ToLower();
+				tail = str.Substring(index + 1);
 			}
-			else 
-			{
-				int index = str.IndexOf(" ");
-				string cmd = str;
-				string tail = "";
-				if (index > 0)
+
+
+			cmd="cmd"+cmd;
+			MethodInfo mi = this.GetType().GetMethod(cmd,BindingFlags.Instance|BindingFlags.NonPublic);
+			if(mi!=null) {
+				return (bool)mi.Invoke(this,new object[]{tail});
+			}
+			else {
+				if (!string.IsNullOrEmpty(str))
 				{
-					cmd = str.Substring(0, index).Trim().ToLower();
-					tail = str.Substring(index + 1);
-				}
-
-
-				cmd="cmd"+cmd;
-				MethodInfo mi = this.GetType().GetMethod(cmd,BindingFlags.Instance|BindingFlags.NonPublic);
-				if(mi!=null) {
-					return (bool)mi.Invoke(this,new object[]{tail});
-				}
-				else {
-					if (!string.IsNullOrEmpty(str))
+					var luaFunc = state.getFunction("Slua.ldb.printExpr");
+					object[] rets=(object[])luaFunc.call(str);
+					if (((bool)rets[0]) == false)
 					{
-						var luaFunc = state.getFunction("Slua.ldb.printExpr");
-						luaFunc.call(str);
+						error(rets[1] as string);
+						return false;
 					}
+					return true;
 				}
-				return false;
 			}
+
+			return true;
 		}
 	}
 }

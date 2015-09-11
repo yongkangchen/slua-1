@@ -118,7 +118,7 @@ namespace SLua
 					exports.Add(t);
 			}
 			
-			GenerateBind(exports, "BindUnity", 0,path);
+			GenerateBind(exports, "BindUnity", 0, path);
 			if(autoRefresh)
 			    AssetDatabase.Refresh();
 			Debug.Log("Generate engine interface finished");
@@ -126,33 +126,24 @@ namespace SLua
 
 		static bool filterType(Type t, List<string> noUseList, List<string> uselist)
 		{
-			bool export = true;
-
 			// check type in uselist
+			string fullName = t.FullName;
 			if (uselist != null && uselist.Count > 0)
 			{
-				export = false;
-				foreach (string str in uselist)
-				{
-					if (t.FullName == str)
-					{
-						export = true;
-					}
-				}
+				return uselist.Contains(fullName);
 			}
 			else
 			{
 				// check type not in nouselist
 				foreach (string str in noUseList)
 				{
-					if (t.FullName.Contains(str))
+					if (fullName.Contains(str))
 					{
-						export = false;
+						return false;
 					}
 				}
+				return true;
 			}
-
-			return export;
 		}
 		
 		[MenuItem("SLua/Unity/Make UI (for Unity4.6+)")]
@@ -181,7 +172,7 @@ namespace SLua
 				}
 			}
 			
-			GenerateBind(exports, "BindUnityUI", 1,path);
+			GenerateBind(exports, "BindUnityUI", 1, path);
 			if(autoRefresh)
 			    AssetDatabase.Refresh();
 			Debug.Log("Generate UI interface finished");
@@ -192,10 +183,6 @@ namespace SLua
 		{
 			clear(new string[] { Path + "Unity" });
 			Debug.Log("Clear Unity & UI complete.");
-		}
-		static public bool IsObsolete(MemberInfo t)
-		{
-			return t.GetCustomAttributes(typeof(ObsoleteAttribute), false).Length > 0;
 		}
 		
 		[MenuItem("SLua/Custom/Make")]
@@ -216,16 +203,18 @@ namespace SLua
 			ExportGenericDelegate fun = (Type t, string ns) =>
 			{
 				if (Generate(t, ns, path))
-				exports.Add(t);
+					exports.Add(t);
 			};
 			
 			// export self-dll
 			Assembly assembly = Assembly.Load("Assembly-CSharp");
 			Type[] types = assembly.GetExportedTypes();
-			
+
+			HashSet<string> namespaces = CustomExport.OnAddCustomNamespace ();
+
 			foreach (Type t in types)
 			{
-				if (t.GetCustomAttributes(typeof(CustomLuaClassAttribute), false).Length > 0)
+				if (t.GetCustomAttributes(typeof(CustomLuaClassAttribute), false).Length > 0 || namespaces.Contains(t.Namespace))
 				{
 					fun(t, null);
 				}
@@ -233,7 +222,7 @@ namespace SLua
 			
 			CustomExport.OnAddCustomClass(fun);
 			
-			GenerateBind(exports, "BindCustom", 3,path);
+			GenerateBind(exports, "BindCustom", 3, path);
             if(autoRefresh)
 			    AssetDatabase.Refresh();
 			
@@ -248,14 +237,12 @@ namespace SLua
 			}
 
 			List<Type> cust = new List<Type>();
-			Assembly assembly = Assembly.Load("Assembly-CSharp");
-			Type[] types = assembly.GetExportedTypes();
 			List<string> assemblyList = new List<string>();
 			CustomExport.OnAddCustomAssembly(ref assemblyList);
 			foreach (string assemblyItem in assemblyList)
 			{
-				assembly = Assembly.Load(assemblyItem);
-				types = assembly.GetExportedTypes();
+				Assembly assembly = Assembly.Load(assemblyItem);
+				Type[] types = assembly.GetExportedTypes();
 				foreach (Type t in types)
 				{
 					cust.Add(t);
@@ -399,34 +386,38 @@ namespace SLua
 		Dictionary<string, PropPair> propname = new Dictionary<string, PropPair>();
 		
 		int indent = 0;
-		
+
 		public void GenerateBind(List<Type> list, string name, int order)
 		{
 			HashSet<Type> exported = new HashSet<Type>();
 			string f = path + name + ".cs";
 			StreamWriter file = new StreamWriter(f, false, Encoding.UTF8);
 			Write(file, "using System;");
+			Write(file, "using System.Collections.Generic;");
 			Write(file, "namespace SLua {");
 			Write(file, "[LuaBinder({0})]", order);
 			Write(file, "public class {0} {{", name);
-			Write(file, "public static void Bind(IntPtr l) {");
+			Write(file, "public static Action<IntPtr>[] GetBindList() {");
+			Write(file, "Action<IntPtr>[] list= {");
 			foreach (Type t in list)
 			{
 				WriteBindType(file, t, list, exported);
 			}
+			Write(file, "};");
+			Write(file, "return list;");
 			Write(file, "}");
 			Write(file, "}");
 			Write(file, "}");
 			file.Close();
 		}
-		
+
 		void WriteBindType(StreamWriter file, Type t, List<Type> exported, HashSet<Type> binded)
 		{
 			if (t == null || binded.Contains(t) || !exported.Contains(t))
 				return;
-			
+
 			WriteBindType(file, t.BaseType, exported, binded);
-			Write(file, "{0}.reg(l);", ExportName(t), binded);
+			Write(file, "{0}.reg,", ExportName(t), binded);
 			binded.Add(t);
 		}
 		
@@ -552,20 +543,24 @@ namespace SLua
 			}
 			
 			Write(file, "ld.pcall({0}, error);", mi.GetParameters().Length - outindex.Count);
-			
+
+			int offset = 0;
 			if (mi.ReturnType != typeof(void))
-				WriteValueCheck(file, mi.ReturnType, 1, "ret", "error+");
+			{
+				offset = 1;
+				WriteValueCheck(file, mi.ReturnType, offset, "ret", "error+");
+			}
 			
 			foreach (int i in outindex)
 			{
 				string a = string.Format("a{0}", i + 1);
-				WriteCheckType(file, mi.GetParameters()[i].ParameterType, i + 1, a, "error+");
+				WriteCheckType(file, mi.GetParameters()[i].ParameterType, i + offset, a, "error+");
 			}
 			
 			foreach (int i in refindex)
 			{
 				string a = string.Format("a{0}", i + 1);
-				WriteCheckType(file, mi.GetParameters()[i].ParameterType, i + 1, a, "error+");
+				WriteCheckType(file, mi.GetParameters()[i].ParameterType, i + offset, a, "error+");
 			}
 			
 			
@@ -731,12 +726,10 @@ namespace SLua
 			// Write export function
 			Write(file, "static public void reg(IntPtr l) {");
 			Write(file, "getEnumTable(l,\"{0}\");", string.IsNullOrEmpty(givenNamespace) ? FullName(t) : givenNamespace);
-			
-			FieldInfo[] fields = t.GetFields();
-			foreach (FieldInfo f in fields)
+
+			foreach (object value in Enum.GetValues (t))
 			{
-				if (f.Name == "value__") continue;
-				Write(file, "addMember(l,{0},\"{1}\");", (int)f.GetValue(null), f.Name);
+				Write(file, "addMember(l,{0},\"{1}\");", (int)value, value.ToString());
 			}
 			
 			Write(file, "LuaDLL.lua_pop(l, 1);");
@@ -829,9 +822,9 @@ namespace SLua
 			return memberFilter.Contains(t.Name + "." + mi.Name);
 		}
 		
-		bool IsObsolete(MemberInfo mi)
+		bool IsObsolete(MemberInfo t)
 		{
-			return LuaCodeGen.IsObsolete(mi);
+			return t.GetCustomAttributes(typeof(ObsoleteAttribute), false).Length > 0;
 		}
 		
 		void RegFunction(Type t, StreamWriter file)
@@ -1188,7 +1181,7 @@ namespace SLua
 				Write(file, "checkEnum(l,{2}{0},out {1});", n, v, nprefix);
 			else if (t.BaseType == typeof(System.MulticastDelegate))
 				Write(file, "int op=LuaDelegation.checkDelegate(l,{2}{0},out {1});", n, v, nprefix);
-			else if (t.IsValueType && !IsBaseType(t))
+			else if (IsValueType(t))
 				Write(file, "checkValueType(l,{2}{0},out {1});", n, v, nprefix);
 			else
 				Write(file, "checkType(l,{2}{0},out {1});", n, v, nprefix);
@@ -1510,16 +1503,6 @@ namespace SLua
 			return true;
 		}
 		
-		bool ContainGeneric(ParameterInfo[] pars)
-		{
-			foreach (ParameterInfo p in pars)
-			{
-				if (p.ParameterType.IsGenericType || p.ParameterType.IsGenericParameter || p.ParameterType.IsGenericTypeDefinition)
-					return true;
-			}
-			return false;
-		}
-		
 		
 		void WriteCheckSelf(StreamWriter file, Type t)
 		{
@@ -1631,11 +1614,10 @@ namespace SLua
 			Write(file, "return {0};", retcount);
 		}
 		
-		string SimpleType_(Type t)
+		string SimpleType(Type t)
 		{
 			
 			string tn = t.Name;
-			
 			switch (tn)
 			{
 			case "Single":
@@ -1656,12 +1638,6 @@ namespace SLua
 				tn = tn.Replace("System.Object", "object");
 				return tn;
 			}
-		}
-		
-		string SimpleType(Type t)
-		{
-			string ret = SimpleType_(t);
-			return ret;
 		}
 		
 		void WritePushValue(Type t, StreamWriter file)
@@ -1720,15 +1696,23 @@ namespace SLua
 					else
 						Write(file, "checkParams(l,{0},out a{1});", n + argstart, n + 1);
 				}
-				else if (t.IsValueType && !IsBaseType(t))
+				else if (IsValueType(t))
 					Write(file, "checkValueType(l,{0},out a{1});", n + argstart, n + 1);
 				else
 					Write(file, "checkType(l,{0},out a{1});", n + argstart, n + 1);
 			}
 		}
 
+		bool IsValueType(Type t)
+		{
+			return t.BaseType == typeof(ValueType) && !IsBaseType(t);
+		}
+
 		bool IsBaseType(Type t)
 		{
+			if (t.IsByRef) {
+				t = t.GetElementType();
+			}
 			return t.IsPrimitive
 				|| t == typeof(Color)
 				|| t == typeof(Vector2)

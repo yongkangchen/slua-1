@@ -286,8 +286,10 @@ namespace LuaInterface
         [DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
         public static extern void lua_pushinteger(IntPtr luaState, Int64 i);
 
-        [DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
-        public static extern Int64 luaL_checkinteger(IntPtr luaState, int stackPos); 
+        public static Int64 luaL_checkinteger(IntPtr luaState, int stackPos) {
+			luaL_checktype(luaState, stackPos, LuaTypes.LUA_TNUMBER);
+			return lua_tointegerx(luaState, stackPos, IntPtr.Zero);
+		}
 
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
 		public static extern int luaS_yield(IntPtr luaState,int nrets);
@@ -307,6 +309,9 @@ namespace LuaInterface
 
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
 		public static extern void lua_copy(IntPtr luaState,int from,int toidx);
+
+		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
+		public static extern int lua_isinteger(IntPtr luaState, int p);
 #else
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
 		public static extern int lua_resume(IntPtr L, int narg);
@@ -380,8 +385,11 @@ namespace LuaInterface
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
 		public static extern void lua_pushinteger(IntPtr luaState, int i);
 
-		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
-		public static extern int luaL_checkinteger(IntPtr luaState, int stackPos);
+		public static int luaL_checkinteger(IntPtr luaState, int stackPos)
+		{
+			luaL_checktype(luaState, stackPos, LuaTypes.LUA_TNUMBER);
+			return lua_tointeger(luaState, stackPos);
+		}
 
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
 		public static extern void lua_replace(IntPtr luaState, int index);
@@ -577,8 +585,11 @@ namespace LuaInterface
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
 		public static extern void luaL_where(IntPtr luaState, int level);
 
-		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
-		public static extern double luaL_checknumber(IntPtr luaState, int stackPos);
+		public static double luaL_checknumber(IntPtr luaState, int stackPos)
+		{
+			luaL_checktype(luaState, stackPos, LuaTypes.LUA_TNUMBER);
+			return lua_tonumber(luaState, stackPos);
+		}
 
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
 		public static extern void lua_concat(IntPtr luaState, int n);
@@ -617,19 +628,19 @@ namespace LuaInterface
 		}
 
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
-		public static extern void luaS_checkVector2(IntPtr l, int p, out float x, out float y);
+		public static extern int luaS_checkVector2(IntPtr l, int p, out float x, out float y);
 
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
-		public static extern void luaS_checkVector3(IntPtr l, int p, out float x, out float y, out float z);
+		public static extern int luaS_checkVector3(IntPtr l, int p, out float x, out float y, out float z);
 
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
-		public static extern void luaS_checkVector4(IntPtr l, int p, out float x, out float y, out float z, out float w);
+		public static extern int luaS_checkVector4(IntPtr l, int p, out float x, out float y, out float z, out float w);
 
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
-		public static extern void luaS_checkQuaternion(IntPtr l, int p, out float x, out float y, out float z, out float w);
+		public static extern int luaS_checkQuaternion(IntPtr l, int p, out float x, out float y, out float z, out float w);
 
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
-		public static extern void luaS_checkColor(IntPtr l, int p, out float x, out float y, out float z, out float w);
+		public static extern int luaS_checkColor(IntPtr l, int p, out float x, out float y, out float z, out float w);
 
 		[DllImport(LUADLL, CallingConvention = CallingConvention.Cdecl)]
 		public static extern void luaS_pushVector2(IntPtr l, float x, float y);

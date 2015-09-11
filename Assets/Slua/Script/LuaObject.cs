@@ -123,7 +123,7 @@ return newindex
 local type=type
 local error=error
 local rawget=rawget
-local sub=string.sub
+local getmetatable=getmetatable
 local function index(ud,k)
     local t=getmetatable(ud)
     repeat
@@ -150,7 +150,7 @@ return index
 			index_func = (LuaFunction)L.doString(indexfun);
 
 			// object method
-			LuaDLL.lua_newtable(l);
+			LuaDLL.lua_createtable(l, 0, 4);
 			addMember(l, ToString);
 			addMember(l, GetHashCode);
 			addMember(l, Equals);
@@ -509,16 +509,14 @@ return index
 			LuaDLL.lua_newtable(l);
 		}
 
-		public static void newTypeTable(IntPtr l, string t)
+		public static void newTypeTable(IntPtr l, string name)
 		{
-			string[] subt = t.Split(new Char[] { '.' });
-
+			string[] subt = name.Split('.');
 
 			LuaDLL.lua_pushglobaltable(l);
 
-			for (int n = 0; n < subt.Length; n++)
+			foreach(string t in subt)
 			{
-				t = subt[n];
 				LuaDLL.lua_pushstring(l, t);
 				LuaDLL.lua_rawget(l, -2);
 				if (LuaDLL.lua_isnil(l, -1))
@@ -672,7 +670,7 @@ return index
 				LuaDLL.lua_setfield(l, -3, name);
 			}
 			else
-				LuaDLL.lua_setfield(l, -2, func.Method.Name);
+				LuaDLL.lua_setfield(l, -2, name);
 		}
 
 		protected static void addMember(IntPtr l, LuaCSFunction func, bool instance)
@@ -691,7 +689,7 @@ return index
 
             int t = instance ? -2 : -3;
 
-			LuaDLL.lua_newtable(l);
+			LuaDLL.lua_createtable(l, 2, 0);
 			if (get == null)
 				LuaDLL.lua_pushnil(l);
 			else
@@ -781,7 +779,14 @@ return index
                 case LuaTypes.LUA_TNIL:
                     return !t.IsValueType && !t.IsPrimitive;
 				case LuaTypes.LUA_TNUMBER:
+#if LUA_5_3
+					if (LuaDLL.lua_isinteger(l, p) > 0)
+						return (t.IsPrimitive && t != typeof(float) && t != typeof(double)) || t.IsEnum;
+					else
+						return t == typeof(float) || t == typeof(double);
+#else
 					return t.IsPrimitive || t.IsEnum;
+#endif
 				case LuaTypes.LUA_TUSERDATA:
 					object o = checkObj(l, p);
 					Type ot = o.GetType();
@@ -1236,8 +1241,7 @@ return index
 
 		static public bool checkEnum<T>(IntPtr l, int p, out T o) where T : struct
 		{
-			LuaDLL.luaL_checktype(l, p, LuaTypes.LUA_TNUMBER);
-			int i = LuaDLL.lua_tointeger(l, p);
+			int i = (int) LuaDLL.luaL_checkinteger (l, p);
 			o = (T)Enum.ToObject(typeof(T), i);
 
 			return true;
@@ -1443,7 +1447,7 @@ return index
 				LuaDLL.lua_pushnil(l);
 				return;
 			}
-			LuaDLL.lua_newtable(l);
+			LuaDLL.lua_createtable(l, o.Length, 0);
 			for (int n = 0; n < o.Length; n++)
 			{
 				pushValue(l, o[n]);
@@ -1463,7 +1467,7 @@ return index
 				LuaDLL.lua_pushnil(l);
 				return;
 			}
-			LuaDLL.lua_newtable(l);
+			LuaDLL.lua_createtable(l, o.Length, 0);
 			for (int n = 0; n < o.Length; n++)
 			{
 				pushValue(l, o[n]);
@@ -1483,7 +1487,7 @@ return index
 				LuaDLL.lua_pushnil(l);
 				return;
 			}
-			LuaDLL.lua_newtable(l);
+			LuaDLL.lua_createtable(l, o.Length, 0);
 			for (int n = 0; n < o.Length; n++)
 			{
 				pushValue(l, o[n]);
@@ -1513,7 +1517,7 @@ return index
 				LuaDLL.lua_pushnil(l);
 				return;
 			}
-			LuaDLL.lua_newtable(l);
+			LuaDLL.lua_createtable(l, o.Length, 0);
 			for (int n = 0; n < o.Length; n++)
 			{
 				pushValue(l, o[n]);
@@ -1537,7 +1541,7 @@ return index
 				LuaDLL.lua_pushnil(l);
 				return;
 			}
-			LuaDLL.lua_newtable(l);
+			LuaDLL.lua_createtable(l, o.Length, 0);
 			for (int n = 0; n < o.Length; n++)
 			{
 				pushValue(l, o[n]);
@@ -1557,7 +1561,7 @@ return index
 				LuaDLL.lua_pushnil(l);
 				return;
 			}
-			LuaDLL.lua_newtable(l);
+			LuaDLL.lua_createtable(l, o.Length, 0);
 			for (int n = 0; n < o.Length; n++)
 			{
 				pushValue(l, o[n]);
@@ -1578,7 +1582,7 @@ return index
 				LuaDLL.lua_pushnil(l);
 				return;
 			}
-			LuaDLL.lua_newtable(l);
+			LuaDLL.lua_createtable(l, o.Length, 0);
 			for (int n = 0; n < o.Length; n++)
 			{
 				pushValue(l, o[n]);

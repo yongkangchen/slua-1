@@ -497,20 +497,21 @@ namespace SLua
 			refQueue = new Queue<UnrefPair>();
             ObjectCache.make(L);
 
+			LuaDLL.lua_atpanic (L, panicCallback);
+
 			LuaDLL.luaL_openlibs(L);
 
 			string PCallCSFunction = @"
-	return function(cs_func)
-		local assert = assert
-		local function call(ok,...)
-			assert(ok, ...)
-			return ...
-		end
-
-		return function(...)
-			return call(cs_func(...))
-		end
+local assert = assert
+local function check(ok,...)
+	assert(ok, ...)
+	return ...
+end
+return function(cs_func)
+	return function(...)
+		return check(cs_func(...))
 	end
+end
 ";
 
 			LuaDLL.lua_dostring(L, PCallCSFunction);
@@ -538,11 +539,12 @@ namespace SLua
 
             string resumefunc = @"
 local resume = coroutine.resume
-local unpack = unpack or table.unpack
+local function check(co, ok, err, ...)
+	if not ok then UnityEngine.Debug.LogError(debug.traceback(co,err)) end
+	return ok, err, ...
+end
 coroutine.resume=function(co,...)
-	local ret={resume(co,...)}
-	if not ret[1] then UnityEngine.Debug.LogError(debug.traceback(co,ret[2])) end
-	return unpack(ret)
+	return check(co, resume(co,...))
 end
 ";
 
@@ -726,7 +728,14 @@ end
 		[MonoPInvokeCallbackAttribute(typeof(LuaCSFunction))]
 		internal static int loadfile(IntPtr L)
 		{
-			return loader(L);
+			loader(L);
+
+			if (LuaDLL.lua_isnil(L, -1))
+			{
+				string fileName = LuaDLL.lua_tostring(L, 1);
+				return LuaObject.error(L, "Can't find {0}", fileName);
+			}
+			return 2;
 		}
 
 		[MonoPInvokeCallbackAttribute(typeof(LuaCSFunction))]
@@ -741,11 +750,23 @@ end
 			}
 			else
 			{
+				if (LuaDLL.lua_isnil(L, -1))
+				{
+					string fileName = LuaDLL.lua_tostring(L, 1);
+					return LuaObject.error(L, "Can't find {0}", fileName);
+				}
 				int k = LuaDLL.lua_gettop(L);
 				LuaDLL.lua_call(L, 0, LuaDLL.LUA_MULTRET);
 				k = LuaDLL.lua_gettop(L);
 				return k-n;
 			}
+		}
+
+		[MonoPInvokeCallbackAttribute(typeof(LuaCSFunction))]
+		static public int panicCallback(IntPtr l)
+		{
+			string reason = string.Format ("unprotected error in call to Lua API ({0})", LuaDLL.lua_tostring (l, -1));
+			throw new Exception (reason);
 		}
 
 		public object doString(string str)
@@ -787,7 +808,9 @@ end
 					return LuaObject.error(L, errstr);
 				}
 			}
-			return LuaObject.error(L, "Can't find {0}", fileName);
+			LuaObject.pushValue(L, true);
+			LuaDLL.lua_pushnil(L);
+			return 2;
 		}
 
 		public object doFile(string fn)
@@ -821,9 +844,8 @@ end
 				return true;
 			}
 			string err = LuaDLL.lua_tostring(L, -1);
-			Debug.LogError(err);
 			LuaDLL.lua_pop(L, 2);
-			return false;
+			throw new Exception(err);
 		}
 
 		internal static byte[] loadFile(string fn)
@@ -841,6 +863,8 @@ end
 						return null;
 					bytes = asset.bytes;
 				}
+
+				DebugInterface.require(fn, bytes);
 				return bytes;
 			}
 			catch (Exception e)

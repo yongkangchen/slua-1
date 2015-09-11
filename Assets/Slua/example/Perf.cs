@@ -8,8 +8,18 @@ public class Perf : MonoBehaviour
 	// Use this for initialization
 	void Start()
 	{
+		var startMem = System.GC.GetTotalMemory (true);
+
+		var start = Time.realtimeSinceStartup;
 		l = new LuaSvr();
-		l.start("perf");
+		l.init(null, () =>
+		{
+			Debug.Log ("start cost: " + (Time.realtimeSinceStartup - start));
+
+			var endMem = System.GC.GetTotalMemory (true);
+			Debug.Log ("startMem: " + startMem + ", endMem: " + endMem + ", " + "cost mem: " + (endMem - startMem));
+			l.start("perf");
+		});
 
 #if UNITY_5
 		Application.logMessageReceived += this.log;
@@ -27,6 +37,8 @@ public class Perf : MonoBehaviour
 
 	void OnGUI()
 	{
+		if (!l.inited)
+			return;
 
 		if (GUI.Button(new Rect(10, 10, 120, 50), "Test1"))
 		{
